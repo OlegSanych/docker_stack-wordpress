@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+if [ "$1" == "start" ]; then
+    sudo docker-compose start
+fi
+
+if [ "$1" == "stop" ]; then
+    sudo docker-compose stop
+fi
+
+if [ "$1" == "update" ]; then    
+    sudo docker pull woosungchoi/fpm-alpine && sudo docker-compose pull && sudo docker-compose up --build -d && sudo docker image prune -f
+fi
+
+if [ "$1" == "setup" ]; then
+  echo 'Исходные данные...' \
+  && read -p "[1/6] Укажите доменное имя (прим : mydomain.com) : " DOMAIN
+  read -p "[2/6] Укажите актуальный адрес электронной почты для генерации SSL сертификата (прим : myemail@email.com) : " EMAIL
+  read -p "[3/6] Укажите root пароль для настройки СУБД  (прим : rootdbpassword) : " ROOTDBPASSWORD
+  read -p "[4/6] Укажите имя базы данных для wordpress (прим : dbuser) : " DATABASEUSER
+  read -p "[5/6] Укажите пароль к базе данных для wordpress (прим : dbpassword) : " DATABASEPASSWORD
+  read -p "[6/6] Укажите имя базы данных для wordpress (прим : wordpress) : " DATABASE \
+  && rm -rf wordpress; git clone https://github.com/woosungchoi/docker-wordpress wordpress \
+  && cd wordpress \
+  && sed -i "s/<rootdbpassword>/$ROOTDBPASSWORD/g" .env \
+  && sed -i "s/<databaseuser>/$DATABASEUSER/g" .env \
+  && sed -i "s/<databasepassword>/$DATABASEPASSWORD/g" .env \
+  && sed -i "s/<database>/$DATABASE/g" .env \
+  && sed -i "s/<domain>/$DOMAIN/g" docker-compose.yml \
+  && sed -i "s/<domain>/$DOMAIN/g" docker-compose.production.yml \
+  && sed -i "s/<email>/$EMAIL/g" docker-compose.yml \
+  && sed -i "s/<domain>/$DOMAIN/g" nginx/conf.d/ssl-conf \
+  && sed -i "s/<domain>/$DOMAIN/g" nginx/conf.d/wordpress.conf \
+  && sed -i "s/<domain>/$DOMAIN/g" nginx/conf.d/portainer.conf \
+  && sed -i "s/<domain>/$DOMAIN/g" nginx/conf.d/phpmyadmin.conf \
+  && echo 'Setting timezone to Asia/Seoul...' \
+  && sudo timedatectl set-timezone Eurpoa/Moscow \
+  && echo 'Установка Docker...' \
+  && sudo yum remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine \
+  && sudo dnf install -y https://download.docker.com/linux/centos/7/x86_64/stable/Packages/containerd.io-1.2.6-3.3.el7.x86_64.rpm \
+  && sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo \
+  && sudo dnf install -y docker-ce docker-ce-cli \
+  && sudo systemctl start docker && sudo systemctl enable --now docker \
+  && if [ ! -f /usr/local/bin/docker-compose ] ; then
+        echo 'Установка Docker Compose...' \
+        && COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4) \
+        && sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/bin/docker-compose \
+        && sudo chmod +x /usr/bin/docker-compose
+        else echo 'Установка Docker Compose пропущенна'
+     fi
+  echo 'Настройка SSL...' \
+  && sudo docker-compose up \
+  && echo 'Подготовка docker-compose up' \
+  && sudo docker-compose down -v \
+  && sudo mkdir -p /usr/share/nginx/html;
+  curl -sSLo nginx/conf.d/options-ssl-nginx https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
+  && sudo chmod a+x build/docker-entrypoint.sh \
+  && sudo chmod a+x dc \
+  && mv docker-compose.yml docker-compose.ssl.yml \
+  && mv docker-compose.production.yml docker-compose.yml \
+  && echo 'Настройка cron...' \
+  && echo "0 23 * * * docker start certbot >> /var/log/docker_cron.log 2>&1
+5 23 * * * docker exec nginx nginx -s reload >> /var/log/docker_cron.log 2>&1" >> mycron \
+  && sudo crontab mycron; rm mycron \
+  && echo 'Запуск Docker ...' \
+  && sudo docker-compose up -d  \
+  && echo 'Готово!' \
+  && sudo docker-compose ps \
+  && echo 'Ссылка на wordpress: https://'$DOMAIN;
+  echo 'Ссылка на phpmyadmin: https://pma.'$DOMAIN;
+  echo 'Ссылка на portainer: https://port.'$DOMAIN;
+fi
